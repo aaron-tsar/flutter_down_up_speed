@@ -1,9 +1,11 @@
 library speed_test_dart;
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:speed_test_dart/classes/classes.dart';
 import 'package:speed_test_dart/constants.dart';
 import 'package:speed_test_dart/enums/file_size.dart';
@@ -12,9 +14,23 @@ import 'package:xml/xml.dart';
 
 /// A Speed tester.
 class SpeedTestDart {
+  /// Create a Client for the requests
+  http.Client createCustomClient({
+    final String? userAgent = 'AppleWebKit/537.36 (KHTML, like Gecko)',
+  }) {
+    // Initialize a (lower-level) HttpClient from dart:io with a custom user agent.
+    // (Don't use this directly).
+    final innerClient = HttpClient()..userAgent = userAgent;
+
+    // Pass the lower-level client into an IOClient object (from the http package).
+    return IOClient(innerClient);
+  }
+
   /// Returns [Settings] from speedtest.net.
   Future<Settings> getSettings() async {
-    final response = await http.get(Uri.parse(configUrl));
+    final client = createCustomClient();
+
+    final response = await client.get(Uri.parse(configUrl));
     final settings = Settings.fromXMLElement(
       XmlDocument.parse(response.body).getElement('settings'),
     );
@@ -23,7 +39,7 @@ class SpeedTestDart {
     for (final element in serversUrls) {
       if (serversConfig.servers.isNotEmpty) break;
       try {
-        final resp = await http.get(Uri.parse(element));
+        final resp = await client.get(Uri.parse(element));
 
         serversConfig = ServersList.fromXMLElement(
           XmlDocument.parse(resp.body).getElement('settings'),
@@ -38,7 +54,7 @@ class SpeedTestDart {
     settings.servers = serversConfig.servers
         .where(
           (s) => !ignoredIds.contains(s.id.toString()),
-        )
+    )
         .toList();
     settings.servers.sort((a, b) => a.distance.compareTo(b.distance));
 
@@ -52,6 +68,7 @@ class SpeedTestDart {
     int retryCount = 2,
     int timeoutInSeconds = 2,
   }) async {
+    final client = createCustomClient();
     List<Server> serversToTest = [];
 
     for (final server in servers) {
@@ -60,15 +77,15 @@ class SpeedTestDart {
 
       stopwatch.start();
       try {
-        await http.get(latencyUri).timeout(
-              Duration(
-                seconds: timeoutInSeconds,
-              ),
-              onTimeout: (() => http.Response(
-                    '999999999',
-                    500,
-                  )),
-            );
+        await client.get(latencyUri).timeout(
+          Duration(
+            seconds: timeoutInSeconds,
+          ),
+          onTimeout: (() => http.Response(
+            '999999999',
+            500,
+          )),
+        );
         // If a server fails the request, continue in the iteration
       } catch (_) {
         continue;
@@ -97,10 +114,10 @@ class SpeedTestDart {
 
   /// Returns urls for download test.
   List<String> generateDownloadUrls(
-    Server server,
-    int retryCount,
-    List<FileSize> downloadSizes,
-  ) {
+      Server server,
+      int retryCount,
+      List<FileSize> downloadSizes,
+      ) {
     final downloadUriBase = createTestUrl(server, 'random{0}x{0}.jpg?r={1}');
     final result = <String>[];
     for (final ds in downloadSizes) {
@@ -123,6 +140,7 @@ class SpeedTestDart {
     int retryCount = 3,
     List<FileSize> downloadSizes = defaultDownloadSizes,
   }) async {
+    final client = createCustomClient();
     double downloadSpeed = 0;
 
     // Iterates over all servers, if one request fails, the next one is tried.
@@ -136,7 +154,7 @@ class SpeedTestDart {
         await Future.forEach(testData, (String td) async {
           await semaphore.acquire();
           try {
-            final data = await http.get(Uri.parse(td));
+            final data = await client.get(Uri.parse(td));
             tasks.add(data.bodyBytes.length);
           } finally {
             semaphore.release();
